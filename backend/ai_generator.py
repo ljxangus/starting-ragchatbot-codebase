@@ -1,25 +1,29 @@
 import zhipuai
 from typing import List, Optional, Dict, Any
 
+
 class AIGenerator:
     """Handles interactions with Zhipu AI's GLM-4 API for generating responses"""
 
     # Static system prompt to avoid rebuilding on each call
-    SYSTEM_PROMPT = """ You are an AI assistant specialized in course materials and educational content with access to a comprehensive search tool for course information.
+    SYSTEM_PROMPT = """ You are an AI assistant specialized in course materials and educational content with access to tools for course information.
 
-Search Tool Usage:
-- Use the search tool **only** for questions about specific course content or detailed educational materials
-- **One search per query maximum**
-- Synthesize search results into accurate, fact-based responses
-- If search yields no results, state this clearly without offering alternatives
+Tool Usage:
+- **get_course_outline**: Use for questions about course structure, syllabus, lesson lists, or what topics are covered in a course
+  - Returns: course title, course link, and complete lesson list with numbers and titles
+- **search_course_content**: Use for questions about specific course content, topics within lessons, or detailed educational materials
+  - Returns: relevant content chunks from course materials
+- **One tool call per query maximum**
+- Synthesize tool results into accurate, fact-based responses
+- If tool yields no results, state this clearly without offering alternatives
 
 Response Protocol:
-- **General knowledge questions**: Answer using existing knowledge without searching
-- **Course-specific questions**: Search first, then answer
+- **General knowledge questions**: Answer using existing knowledge without using tools
+- **Course outline/structure questions**: Use get_course_outline tool
+- **Course content questions**: Use search_course_content tool
 - **No meta-commentary**:
- - Provide direct answers only — no reasoning process, search explanations, or question-type analysis
- - Do not mention "based on the search results"
-
+  - Provide direct answers only — no reasoning process, tool explanations, or question-type analysis
+  - Do not mention "based on the tool results"
 
 All responses must be:
 1. **Brief, Concise and focused** - Get to the point quickly
@@ -34,16 +38,15 @@ Provide only the direct answer to what was asked.
         self.model = model
 
         # Pre-build base API parameters
-        self.base_params = {
-            "model": self.model,
-            "temperature": 0,
-            "max_tokens": 800
-        }
+        self.base_params = {"model": self.model, "temperature": 0, "max_tokens": 800}
 
-    def generate_response(self, query: str,
-                         conversation_history: Optional[str] = None,
-                         tools: Optional[List] = None,
-                         tool_manager=None) -> str:
+    def generate_response(
+        self,
+        query: str,
+        conversation_history: Optional[str] = None,
+        tools: Optional[List] = None,
+        tool_manager=None,
+    ) -> str:
         """
         Generate AI response with optional tool usage and conversation context.
 
@@ -67,7 +70,7 @@ Provide only the direct answer to what was asked.
         # Prepare messages for Zhipu AI
         messages = [
             {"role": "system", "content": system_content},
-            {"role": "user", "content": query}
+            {"role": "user", "content": query},
         ]
 
         # Prepare API call parameters efficiently
@@ -102,13 +105,15 @@ Provide only the direct answer to what was asked.
                 "function": {
                     "name": tool["name"],
                     "description": tool["description"],
-                    "parameters": tool["input_schema"]
-                }
+                    "parameters": tool["input_schema"],
+                },
             }
             zhipu_tools.append(zhipu_tool)
         return zhipu_tools
 
-    def _handle_tool_execution(self, initial_response, base_messages: List, tool_manager):
+    def _handle_tool_execution(
+        self, initial_response, base_messages: List, tool_manager
+    ):
         """
         Handle execution of tool calls and get follow-up response.
 
@@ -127,36 +132,36 @@ Provide only the direct answer to what was asked.
         assistant_message = {
             "role": "assistant",
             "content": initial_response.choices[0].message.content or "",
-            "tool_calls": []
+            "tool_calls": [],
         }
 
         # Execute all tool calls and collect results
         for tool_call in initial_response.choices[0].message.tool_calls:
             # Add tool call to assistant message
-            assistant_message["tool_calls"].append({
-                "id": tool_call.id,
-                "type": "function",
-                "function": {
-                    "name": tool_call.function.name,
-                    "arguments": tool_call.function.arguments
+            assistant_message["tool_calls"].append(
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    },
                 }
-            })
+            )
 
         messages.append(assistant_message)
 
         # Execute tool calls and add results
         for tool_call in initial_response.choices[0].message.tool_calls:
             import json
+
             tool_result = tool_manager.execute_tool(
-                tool_call.function.name,
-                **json.loads(tool_call.function.arguments)
+                tool_call.function.name, **json.loads(tool_call.function.arguments)
             )
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": tool_result
-            })
+            messages.append(
+                {"role": "tool", "tool_call_id": tool_call.id, "content": tool_result}
+            )
 
         # Prepare final API call without tools
         final_params = {
